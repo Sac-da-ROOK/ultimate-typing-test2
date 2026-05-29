@@ -1,0 +1,839 @@
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { RotateCcw, Keyboard, Clock, Activity, Target, AlertCircle, AlertTriangle, Settings, Flame, Volume2, VolumeX, Trophy, Award } from 'lucide-react';
+
+// --- Dictionary & Utilities ---
+const DICTIONARY = [
+  "the", "be", "to", "of", "and", "a", "in", "that", "have", "I", "it", "for", "not", "on", 
+  "with", "he", "as", "you", "do", "at", "this", "but", "his", "by", "from", "they", "we", 
+  "say", "her", "she", "or", "an", "will", "my", "one", "all", "would", "there", "their", 
+  "what", "so", "up", "out", "if", "about", "who", "get", "which", "go", "me", "when", 
+  "make", "can", "like", "time", "no", "just", "him", "know", "take", "people", "into", 
+  "year", "your", "good", "some", "could", "them", "see", "other", "than", "then", "now", 
+  "look", "only", "come", "its", "over", "think", "also", "back", "after", "use", "two", 
+  "how", "our", "work", "first", "well", "way", "even", "new", "want", "because", "any", 
+  "these", "give", "day", "most", "us", "is", "are", "was", "were", "been", "being", "has",
+  "had", "does", "did", "going", "many", "much", "more", "life", "world", "between", "each",
+  "program", "developer", "experience", "beautiful", "important", "children", "different"
+];
+
+const PUNCTUATION = [",", ".", "?", "!", ";", ":", '""'];
+
+const ALL_ACHIEVEMENTS = [
+  // Visible Achievements
+  { id: 'Speed Star 🌟', title: 'Speed Star', icon: '🌟', desc: 'Reach 100 WPM', hidden: false },
+  { id: 'Perfect Accuracy 🎯', title: 'Perfect Accuracy', icon: '🎯', desc: 'Finish a test with 100% accuracy', hidden: false },
+  { id: 'Combo Master ⚡', title: 'Combo Master', icon: '⚡', desc: 'Reach a 50 perfect word streak', hidden: false },
+  { id: 'New High Score! 🏆', title: 'New High Score!', icon: '🏆', desc: 'Beat your personal best', hidden: false },
+  { id: 'Marathon Runner 🏃', title: 'Marathon Runner', icon: '🏃', desc: 'Complete a 120-second test', hidden: false },
+  { id: 'Punctuation Pedant 📝', title: 'Punctuation Pedant', icon: '📝', desc: 'Complete a punctuation mode test', hidden: false },
+  { id: 'Number Cruncher 🔢', title: 'Number Cruncher', icon: '🔢', desc: 'Complete a numbers mode test', hidden: false },
+  { id: 'Hardcore 💀', title: 'Hardcore', icon: '💀', desc: 'Complete a hard mode test', hidden: false },
+  
+  // Secret / Easter Egg Achievements
+  { id: 'Sonic Speed 🦔', title: 'Sonic Speed', icon: '🦔', desc: 'Reach a blistering 120+ WPM', hidden: true },
+  { id: 'Slow & Steady 🐢', title: 'Slow & Steady', icon: '🐢', desc: 'Finish with 100% accuracy but under 20 WPM', hidden: true },
+  { id: 'Code Wizard 🧙‍♂️', title: 'Code Wizard', icon: '🧙‍♂️', desc: 'Correctly type "developer"', hidden: true },
+  { id: 'Do a barrel roll 🛩️', title: 'Barrel Roll', icon: '🛩️', desc: 'Type "barrel"', hidden: true },
+  { id: 'Caffeine Rush ☕', title: 'Caffeine Rush', icon: '☕', desc: 'Type "coffee"', hidden: true },
+  { id: 'The Answer 🌌', title: 'The Answer', icon: '🌌', desc: 'Type "42"', hidden: true },
+  { id: 'Back to the 80s 📼', title: 'Back to the 80s', icon: '📼', desc: 'Activate Retro mode', hidden: true },
+  { id: 'Matrix Hacker 🕶️', title: 'Matrix Hacker', icon: '🕶️', desc: 'Discover the Matrix theme by typing "matrix"', hidden: true },
+  { id: 'Backspace Abuser ⌨️', title: 'Backspace Abuser', icon: '⌨️', desc: 'Use backspace over 50 times in one test', hidden: true },
+  { id: 'Stop Poking Me 😵', title: 'Stop Poking Me', icon: '😵', desc: 'Annoy the mascot by clicking them repeatedly', hidden: true },
+  { id: 'Night Owl 🦉', title: 'Night Owl', icon: '🦉', desc: 'Complete a test between 12 AM and 4 AM', hidden: true }
+];
+
+const generateWords = (count, mode) => {
+  return Array.from({ length: count }, () => {
+    let word = "";
+    if (mode === 'numbers') {
+      word = Math.floor(Math.random() * 10000).toString();
+    } else if (mode === 'hard') {
+      const longWords = DICTIONARY.filter(w => w.length >= 6);
+      word = longWords[Math.floor(Math.random() * longWords.length)];
+    } else {
+      word = DICTIONARY[Math.floor(Math.random() * DICTIONARY.length)];
+      if (mode === 'punctuation') {
+        if (Math.random() > 0.7) word = word.charAt(0).toUpperCase() + word.slice(1);
+        if (Math.random() > 0.7) word += PUNCTUATION[Math.floor(Math.random() * PUNCTUATION.length)];
+        if (Math.random() > 0.95) word = `"${word}"`;
+      }
+    }
+    return word;
+  });
+};
+
+// --- Audio System (Web Audio API) ---
+const audioCtx = typeof window !== 'undefined' ? new (window.AudioContext || window.webkitAudioContext)() : null;
+const playSound = (type) => {
+  if (!audioCtx) return;
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  
+  const osc = audioCtx.createOscillator();
+  const gainNode = audioCtx.createGain();
+  osc.connect(gainNode);
+  gainNode.connect(audioCtx.destination);
+  
+  if (type === 'type') {
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(600, audioCtx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(300, audioCtx.currentTime + 0.05);
+    gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.05);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.05);
+  } else if (type === 'error') {
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(150, audioCtx.currentTime);
+    gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.1);
+  } else if (type === 'mascot') {
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(400, audioCtx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(200, audioCtx.currentTime + 0.1);
+    gainNode.gain.setValueAtTime(0.05, audioCtx.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.1);
+  }
+};
+
+// --- Subcomponents ---
+const Caret = ({ color }) => (
+  <span className={`absolute -left-[2px] top-[10%] bottom-[10%] w-[3px] animate-pulse rounded-full z-10 ${color}`}></span>
+);
+
+const TimelineChart = ({ data, themeColors }) => {
+  if (!data || data.length === 0) return null;
+  const width = 800;
+  const height = 160;
+  const padding = 20;
+  
+  const maxWpm = Math.max(...data.map(d => d.wpm), 50); 
+  const minWpm = 0;
+  
+  const getX = (index) => padding + (index / (data.length - 1 || 1)) * (width - padding * 2);
+  const getY = (wpm) => height - padding - ((wpm - minWpm) / (maxWpm - minWpm)) * (height - padding * 2);
+
+  const points = data.map((d, i) => `${getX(i)},${getY(d.wpm)}`).join(' L ');
+  const pathD = `M ${getX(0)},${height} L ${points} L ${getX(data.length - 1)},${height} Z`;
+  const lineD = `M ${points}`;
+
+  return (
+    <div className={`w-full max-w-4xl rounded-xl p-6 border relative ${themeColors.panelBg} ${themeColors.border}`}>
+      <h3 className={`text-sm font-medium mb-4 absolute top-4 left-6 uppercase tracking-wider ${themeColors.textMuted}`}>WPM Timeline</h3>
+      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full overflow-visible mt-4">
+        <defs>
+          <linearGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={themeColors.accentRaw} stopOpacity="0.2" />
+            <stop offset="100%" stopColor={themeColors.accentRaw} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        
+        {[0, 0.5, 1].map(ratio => (
+          <line 
+            key={ratio} x1={padding} y1={padding + (height - padding * 2) * ratio} x2={width - padding} y2={padding + (height - padding * 2) * ratio} 
+            stroke="rgba(150,150,150,0.1)" strokeWidth="2" strokeDasharray="4 4"
+          />
+        ))}
+
+        <path d={pathD} fill="url(#chartGradient)" />
+        <path d={lineD} fill="none" stroke={themeColors.accentRaw} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+        
+        {data.map((d, i) => (
+          <circle key={i} cx={getX(i)} cy={getY(d.wpm)} r="4" fill={themeColors.bgRaw} stroke={themeColors.accentRaw} strokeWidth="2" />
+        ))}
+      </svg>
+    </div>
+  );
+};
+
+const Speedometer = ({ wpm, themeColors }) => {
+  const maxWpm = 120;
+  const clampedWpm = Math.min(wpm, maxWpm);
+  const percentage = clampedWpm / maxWpm;
+  const radius = 35;
+  const circumference = Math.PI * radius; 
+  const dashoffset = circumference * (1 - percentage);
+
+  return (
+    <div className="relative flex flex-col items-center justify-end h-16 w-32 overflow-hidden">
+      <svg className="absolute top-0 w-full h-full" viewBox="0 0 100 50">
+        <path d="M 15 45 A 35 35 0 0 1 85 45" fill="none" stroke="currentColor" strokeWidth="8" className={`${themeColors.text} opacity-20`} strokeLinecap="round" />
+        <path d="M 15 45 A 35 35 0 0 1 85 45" fill="none" stroke={themeColors.accentRaw} strokeWidth="8" strokeDasharray={circumference} strokeDashoffset={dashoffset} className="transition-all duration-300 ease-out" strokeLinecap="round" />
+      </svg>
+      <div className="absolute bottom-0 flex flex-col items-center translate-y-1">
+        <span className={`text-xl font-bold font-mono ${themeColors.accent}`}>{wpm}</span>
+      </div>
+    </div>
+  );
+};
+
+const Mascot = ({ combo, wpm, status, themeColors, onClick, clickCount }) => {
+  let message = "Ready, set, type!";
+  let emotion = "👾";
+  
+  if (clickCount >= 10) {
+    emotion = "😵";
+    message = "Ouch! Stop poking me!";
+  } else if (status === 'finished') {
+    emotion = wpm > 100 ? "🔥" : wpm > 80 ? "😎" : "🎉";
+    message = wpm > 100 ? "Godlike typing!" : wpm > 80 ? "Legendary speed!" : "Great job!";
+  } else if (status === 'running') {
+    if (combo > 20) { emotion = "🔥"; message = "UNSTOPPABLE!"; }
+    else if (combo > 10) { emotion = "⚡"; message = "You're on fire!"; }
+    else if (combo > 5) { emotion = "👀"; message = "Nice streak!"; }
+    else { emotion = "👾"; message = "Keep it up..."; }
+  }
+
+  return (
+    <div className={`fixed bottom-6 right-6 flex items-end gap-3 transition-all duration-500 z-50 ${status === 'idle' ? 'opacity-30' : 'opacity-100'} hover:opacity-100`}>
+      <div className={`px-4 py-2 rounded-2xl rounded-br-none ${themeColors.panelBg} ${themeColors.border} border shadow-lg text-sm font-bold ${themeColors.textBright} animate-bounce`}>
+        {message}
+      </div>
+      <div 
+        onClick={onClick}
+        className={`w-14 h-14 rounded-full ${themeColors.panelBg} border-2 ${themeColors.border} flex items-center justify-center text-3xl shadow-xl bg-opacity-90 select-none cursor-pointer hover:scale-110 active:scale-90 transition-transform ${clickCount >= 10 ? 'animate-[shake_0.5s_infinite]' : ''}`}
+      >
+        {emotion}
+      </div>
+    </div>
+  );
+};
+
+// --- Theme Definitions ---
+const THEMES = {
+  dark: {
+    bg: 'bg-[#1e1e20]', bgRaw: '#1e1e20',
+    text: 'text-zinc-400', textMuted: 'text-zinc-500', textBright: 'text-zinc-200',
+    accent: 'text-yellow-400', accentRaw: 'rgb(250 204 21)', accentBg: 'bg-yellow-400',
+    error: 'text-red-400', errorBg: 'bg-red-900/40', errorBorder: 'border-red-500/50',
+    panelBg: 'bg-zinc-900/40', border: 'border-zinc-800/50',
+    caret: 'bg-yellow-400 shadow-[0_0_8px_rgba(250,204,21,0.6)]'
+  },
+  light: {
+    bg: 'bg-slate-50', bgRaw: '#f8fafc',
+    text: 'text-slate-400', textMuted: 'text-slate-400', textBright: 'text-slate-800',
+    accent: 'text-blue-500', accentRaw: 'rgb(59 130 246)', accentBg: 'bg-blue-500',
+    error: 'text-red-500', errorBg: 'bg-red-100', errorBorder: 'border-red-500/50',
+    panelBg: 'bg-white shadow-sm', border: 'border-slate-200',
+    caret: 'bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.4)]'
+  },
+  matrix: {
+    bg: 'bg-black', bgRaw: '#000000',
+    text: 'text-green-900', textMuted: 'text-green-900', textBright: 'text-green-400',
+    accent: 'text-green-500', accentRaw: 'rgb(34 197 94)', accentBg: 'bg-green-500',
+    error: 'text-red-600', errorBg: 'bg-red-900/50', errorBorder: 'border-red-600/50',
+    panelBg: 'bg-green-950/20', border: 'border-green-900/30',
+    caret: 'bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.6)]'
+  },
+  arcade: {
+    bg: 'bg-indigo-950', bgRaw: '#1e1b4b',
+    text: 'text-fuchsia-400', textMuted: 'text-fuchsia-700', textBright: 'text-cyan-300',
+    accent: 'text-yellow-400', accentRaw: 'rgb(250 204 21)', accentBg: 'bg-yellow-400',
+    error: 'text-red-500', errorBg: 'bg-red-900/60', errorBorder: 'border-red-500/80',
+    panelBg: 'bg-fuchsia-900/20 shadow-[0_0_15px_rgba(217,70,239,0.2)] border-fuchsia-500/30', border: 'border-fuchsia-500/30',
+    caret: 'bg-cyan-300 shadow-[0_0_12px_rgba(103,232,249,0.8)]'
+  },
+  retro: {
+    bg: 'bg-[#2a211c]', bgRaw: '#2a211c',
+    text: 'text-[#ffb000]', textMuted: 'text-[#8c6200]', textBright: 'text-[#ffcc4d]',
+    accent: 'text-[#ff5900]', accentRaw: 'rgb(255 89 0)', accentBg: 'bg-[#ff5900]',
+    error: 'text-red-500', errorBg: 'bg-red-900/50', errorBorder: 'border-red-500/50',
+    panelBg: 'bg-[#1a1410] border border-[#4a3410]', border: 'border-[#4a3410]',
+    caret: 'bg-[#ff5900] shadow-none'
+  }
+};
+
+export default function App() {
+  // Settings & Preferences
+  const [duration, setDuration] = useState(30);
+  const [mode, setMode] = useState('words'); // words | punctuation | numbers | hard
+  const [themeName, setThemeName] = useState('dark');
+  const [soundEnabled, setSoundEnabled] = useState(false);
+  const [personalBest, setPersonalBest] = useState(0);
+  const [isRetro, setIsRetro] = useState(false);
+  const [currentView, setCurrentView] = useState('test'); // 'test' | 'achievements'
+  const [unlockedAchievements, setUnlockedAchievements] = useState([]);
+
+  // Load PB and Achievements from local storage on mount
+  useEffect(() => {
+    const savedPB = localStorage.getItem('ultimate_type_pb');
+    if (savedPB) setPersonalBest(parseInt(savedPB, 10));
+    
+    const savedAchievements = localStorage.getItem('ultimate_type_achievements');
+    if (savedAchievements) {
+      try {
+        setUnlockedAchievements(JSON.parse(savedAchievements));
+      } catch(e) {}
+    }
+  }, []);
+
+  const activeThemeName = isRetro ? 'retro' : themeName;
+  const theme = THEMES[activeThemeName];
+
+  // Core State
+  const [words, setWords] = useState([]);
+  const [status, setStatus] = useState('idle');
+  const [timeLeft, setTimeLeft] = useState(duration);
+  
+  // Typing State
+  const [history, setHistory] = useState([]); 
+  const [currentWord, setCurrentWord] = useState(''); 
+  const [activeWordIndex, setActiveWordIndex] = useState(0);
+  
+  // Advanced Stats & UI State
+  const [isFocused, setIsFocused] = useState(false);
+  const [capsLock, setCapsLock] = useState(false);
+  const [lineOffset, setLineOffset] = useState(0);
+  const [timeline, setTimeline] = useState([]);
+  const [liveWpm, setLiveWpm] = useState(0);
+  const [combo, setCombo] = useState(0);
+  const [maxCombo, setMaxCombo] = useState(0);
+  const [backspaceCount, setBackspaceCount] = useState(0);
+  
+  // Fun Extras State
+  const [toasts, setToasts] = useState([]);
+  const [barrelRoll, setBarrelRoll] = useState(false);
+  const [jitter, setJitter] = useState(false);
+  const [mascotClicks, setMascotClicks] = useState(0);
+  const [logoClicks, setLogoClicks] = useState(0);
+
+  const unlockAchievement = useCallback((title) => {
+    setUnlockedAchievements(prev => {
+      if (!prev.includes(title)) {
+        const newAcc = [...prev, title];
+        localStorage.setItem('ultimate_type_achievements', JSON.stringify(newAcc));
+        
+        const id = Date.now();
+        setToasts(t => [...t, { id, title }]);
+        setTimeout(() => setToasts(t => t.filter(toast => toast.id !== id)), 4000);
+        return newAcc;
+      }
+      return prev;
+    });
+  }, []);
+
+  const handleMascotClick = () => {
+    if (soundEnabled) playSound('mascot');
+    setMascotClicks(prev => {
+      const newCount = prev + 1;
+      if (newCount === 10) unlockAchievement('Stop Poking Me 😵');
+      return newCount;
+    });
+  };
+  
+  // Refs
+  const inputRef = useRef(null);
+  const containerRef = useRef(null);
+  const activeWordRef = useRef(null);
+
+  const stateRefs = useRef({ history, currentWord, words, duration });
+  useEffect(() => {
+    stateRefs.current = { history, currentWord, words, duration };
+  }, [history, currentWord, words, duration]);
+
+  const computeMetrics = useCallback((hist, curr, targetWords, totalTime, timeRemaining) => {
+    let correctChars = 0, incorrectChars = 0, totalChars = 0;
+    const allTyped = [...hist, curr];
+    
+    allTyped.forEach((typed, i) => {
+      const target = targetWords[i];
+      if (!target) return;
+      const maxLen = Math.max(target.length, typed.length);
+      for (let j = 0; j < maxLen; j++) {
+        totalChars++;
+        if (j < target.length && j < typed.length && target[j] === typed[j]) {
+          correctChars++;
+        } else {
+          incorrectChars++;
+        }
+      }
+      if (typed === target) { correctChars++; totalChars++; }
+    });
+
+    const elapsedMins = (totalTime - timeRemaining) / 60;
+    const wpm = Math.round((correctChars / 5) / (elapsedMins || (1/60)));
+    const accuracy = totalChars === 0 ? 0 : Math.round((correctChars / totalChars) * 100);
+    return { wpm, accuracy, correctChars, incorrectChars, totalChars };
+  }, []);
+
+  const initializeTest = useCallback((time = duration, testMode = mode) => {
+    setDuration(time);
+    setMode(testMode);
+    setTimeLeft(time);
+    setWords(generateWords(500, testMode)); 
+    setStatus('idle');
+    setHistory([]);
+    setCurrentWord('');
+    setActiveWordIndex(0);
+    setLineOffset(0);
+    setTimeline([]);
+    setLiveWpm(0);
+    setCombo(0);
+    setMaxCombo(0);
+    setBackspaceCount(0);
+    setBarrelRoll(false);
+    setJitter(false);
+    setCapsLock(false);
+    setMascotClicks(0); // Reset mascot anger
+    if (inputRef.current) {
+      inputRef.current.value = '';
+      inputRef.current.focus();
+    }
+  }, [duration, mode]);
+
+  useEffect(() => { initializeTest(); }, []); 
+
+  // Timer loop
+  useEffect(() => {
+    let interval;
+    if (status === 'running' && timeLeft > 0) {
+      interval = setInterval(() => {
+        setTimeLeft((prevTime) => {
+          const newTime = prevTime - 1;
+          const { history: h, currentWord: c, words: w, duration: d } = stateRefs.current;
+          const stats = computeMetrics(h, c, w, d, newTime);
+          
+          setTimeline(prev => [...prev, { time: d - newTime, wpm: stats.wpm }]);
+          setLiveWpm(stats.wpm);
+          
+          if (newTime === 0) {
+            setStatus('finished');
+            if (stats.wpm > personalBest) {
+              setPersonalBest(stats.wpm);
+              localStorage.setItem('ultimate_type_pb', stats.wpm.toString());
+              unlockAchievement('New High Score! 🏆');
+            }
+          }
+          return newTime;
+        });
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [status, timeLeft, computeMetrics, personalBest, unlockAchievement]);
+
+  // Smooth line scrolling
+  useEffect(() => {
+    if (activeWordRef.current && status !== 'finished') {
+      const offsetTop = activeWordRef.current.offsetTop;
+      if (offsetTop > 48) setLineOffset(offsetTop - 48);
+      else setLineOffset(0);
+    }
+  }, [activeWordIndex, currentWord, status]);
+
+  // Global key listeners
+  useEffect(() => {
+    const handleKeyMod = (e) => setCapsLock(e.getModifierState('CapsLock'));
+    window.addEventListener('keydown', handleKeyMod);
+    window.addEventListener('keyup', handleKeyMod);
+    return () => {
+      window.removeEventListener('keydown', handleKeyMod);
+      window.removeEventListener('keyup', handleKeyMod);
+    };
+  }, []);
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Tab' || e.key === 'Escape') {
+      e.preventDefault();
+      initializeTest();
+      return;
+    }
+    if (status === 'finished') return;
+
+    if (e.key === 'Backspace') {
+      setBackspaceCount(prev => {
+        const newCount = prev + 1;
+        if (newCount === 50) unlockAchievement('Backspace Abuser ⌨️');
+        return newCount;
+      });
+      if (currentWord === '' && activeWordIndex > 0) {
+        e.preventDefault();
+        const prevWord = history[history.length - 1];
+        setHistory((prev) => prev.slice(0, -1));
+        setActiveWordIndex((prev) => prev - 1);
+        setCurrentWord(prevWord);
+      }
+    }
+  };
+
+  const handleChange = (e) => {
+    if (status === 'finished') return;
+    if (status === 'idle') {
+      setStatus('running');
+      setTimeline([{ time: 0, wpm: 0 }]);
+      if(audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+    }
+
+    const val = e.target.value;
+    const targetWord = words[activeWordIndex];
+
+    if (soundEnabled) {
+      const isError = !targetWord.startsWith(val.trim());
+      playSound(isError ? 'error' : 'type');
+    }
+
+    if (val.endsWith(' ')) {
+      if (currentWord.trim() === '' && val.trim() === '') {
+          e.target.value = '';
+          return; 
+      }
+      
+      // Easter Eggs & Secret Unlocks
+      const normalizedWord = currentWord.trim().toLowerCase();
+      if (normalizedWord === 'barrel') {
+        setBarrelRoll(true);
+        setTimeout(() => setBarrelRoll(false), 800);
+        unlockAchievement('Do a barrel roll 🛩️');
+      }
+      if (normalizedWord === 'developer' && targetWord === 'developer') {
+        unlockAchievement('Code Wizard 🧙‍♂️');
+      }
+      if (normalizedWord === 'matrix') {
+        setIsRetro(false);
+        setThemeName('matrix');
+        unlockAchievement('Matrix Hacker 🕶️');
+      }
+      if (normalizedWord === 'coffee') {
+        setJitter(true);
+        setTimeout(() => setJitter(false), 2000);
+        unlockAchievement('Caffeine Rush ☕');
+      }
+      if (normalizedWord === '42') {
+        unlockAchievement('The Answer 🌌');
+      }
+
+      // Combo Check
+      if (currentWord === targetWord) {
+        setCombo(prev => {
+          const newCombo = prev + 1;
+          setMaxCombo(m => Math.max(m, newCombo));
+          return newCombo;
+        });
+      } else {
+        setCombo(0);
+      }
+
+      setHistory((prev) => [...prev, currentWord]);
+      setActiveWordIndex((prev) => prev + 1);
+      setCurrentWord('');
+    } else {
+      setCurrentWord(val);
+      if (!targetWord.startsWith(val)) setCombo(0);
+    }
+  };
+
+  const finalStats = useMemo(() => {
+    if (status !== 'finished') return null;
+    return computeMetrics(history, currentWord, words, duration, 0);
+  }, [status, history, currentWord, words, duration, computeMetrics]);
+
+  // Achievement Evaluator (End of test)
+  useEffect(() => {
+    if (status === 'finished' && finalStats) {
+      if (finalStats.wpm >= 100) unlockAchievement('Speed Star 🌟');
+      if (finalStats.wpm >= 120) unlockAchievement('Sonic Speed 🦔');
+      if (finalStats.accuracy === 100 && finalStats.totalChars > 0) unlockAchievement('Perfect Accuracy 🎯');
+      if (finalStats.accuracy === 100 && finalStats.wpm < 20 && finalStats.totalChars > 0) unlockAchievement('Slow & Steady 🐢');
+      if (maxCombo >= 50) unlockAchievement('Combo Master ⚡');
+      if (duration === 120) unlockAchievement('Marathon Runner 🏃');
+      if (mode === 'punctuation') unlockAchievement('Punctuation Pedant 📝');
+      if (mode === 'numbers') unlockAchievement('Number Cruncher 🔢');
+      if (mode === 'hard') unlockAchievement('Hardcore 💀');
+      
+      const hour = new Date().getHours();
+      if (hour >= 0 && hour < 4) unlockAchievement('Night Owl 🦉');
+    }
+  }, [status, finalStats, maxCombo, duration, mode, unlockAchievement]);
+
+  const renderWord = (word, wIdx) => {
+    const isActive = wIdx === activeWordIndex;
+    const isTyped = wIdx < activeWordIndex;
+    const typedData = isActive ? currentWord : (isTyped ? history[wIdx] : '');
+    const isPerfect = isTyped && word === typedData;
+    const isErrorWord = isTyped && !isPerfect;
+
+    const targetChars = word.split('');
+    const typedChars = typedData.split('');
+    const maxLen = Math.max(targetChars.length, typedChars.length);
+
+    return (
+      <div key={wIdx} ref={isActive ? activeWordRef : null}
+        className={`flex tracking-wide transition-colors duration-200 
+          ${isErrorWord ? `border-b-2 ${theme.errorBorder} -mb-[2px]` : ''}
+          ${isPerfect ? `${theme.textBright} drop-shadow-sm` : ''}
+        `}
+      >
+        {Array.from({ length: maxLen }).map((_, cIdx) => {
+          const targetChar = targetChars[cIdx];
+          const typedChar = typedChars[cIdx];
+          let colorClass = theme.textMuted; 
+          
+          if (typedChar) {
+            if (targetChar === typedChar) colorClass = theme.textBright;
+            else if (!targetChar) colorClass = `${theme.error} ${theme.errorBg} rounded-sm`; 
+            else colorClass = `${theme.error} ${theme.errorBg} rounded-sm`;
+          }
+          const isCaretHere = isActive && isFocused && cIdx === typedChars.length;
+
+          return (
+            <span key={cIdx} className="relative">
+              {isCaretHere && <Caret color={theme.caret} />}
+              <span className={colorClass}>{targetChar || typedChar}</span>
+            </span>
+          );
+        })}
+        {isActive && isFocused && typedChars.length === maxLen && (
+          <span className="relative"><Caret color={theme.caret} /></span>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className={`min-h-screen ${theme.bg} ${theme.text} font-sans flex flex-col items-center p-6 sm:p-12 transition-colors duration-500 overflow-hidden`}>
+      <style>{`
+        @keyframes shake {
+          0%, 100% { transform: translateX(0); }
+          10%, 30%, 50%, 70%, 90% { transform: translateX(-5px) translateY(2px) rotate(-1deg); }
+          20%, 40%, 60%, 80% { transform: translateX(5px) translateY(-2px) rotate(1deg); }
+        }
+        .animate-shake { animation: shake 0.3s infinite; }
+      `}</style>
+      
+      {/* Header & Advanced Settings */}
+      <header className="w-full flex flex-col sm:flex-row gap-4 items-center justify-between mb-8">
+        <div 
+          className={`flex items-center gap-3 font-bold text-2xl tracking-tighter cursor-pointer transition-all duration-300 ${theme.accent} ${logoClicks >= 5 ? 'rotate-[360deg] scale-110' : 'hover:opacity-80'}`} 
+          onClick={() => { 
+            setCurrentView('test'); 
+            initializeTest(); 
+            setLogoClicks(p => p + 1);
+            if (logoClicks >= 5) setTimeout(() => setLogoClicks(0), 1000);
+          }}
+        >
+          <Keyboard size={32} strokeWidth={2.5} />
+          <span>UltimateType</span>
+        </div>
+
+        <div className={`flex flex-wrap justify-center items-center gap-4 ${status === 'running' ? 'opacity-0 pointer-events-none' : 'opacity-100'} transition-opacity duration-300`}>
+          
+          {/* Retro Slider */}
+          <div className={`flex items-center gap-2 ${theme.panelBg} px-3 py-1.5 rounded-lg shadow-sm border ${theme.border}`}>
+            <span className={`text-xs font-bold uppercase tracking-wider ${isRetro ? theme.textMuted : theme.textBright}`}>Normal</span>
+            <div 
+              className={`w-10 h-5 flex items-center rounded-full p-1 cursor-pointer transition-colors ${isRetro ? theme.accentBg : 'bg-zinc-600'}`}
+              onClick={() => { 
+                const newValue = !isRetro;
+                setIsRetro(newValue); 
+                if (newValue) unlockAchievement('Back to the 80s 📼');
+              }}
+            >
+              <div className={`bg-white w-3 h-3 rounded-full shadow-md transform transition-transform ${isRetro ? 'translate-x-5' : ''}`} />
+            </div>
+            <span className={`text-xs font-bold uppercase tracking-wider ${isRetro ? theme.textBright : theme.textMuted}`}>Retro</span>
+          </div>
+
+          {/* Modes */}
+          <div className={`flex ${theme.panelBg} rounded-lg p-1.5 shadow-sm`}>
+            {['words', 'punctuation', 'numbers', 'hard'].map((m) => (
+              <button key={m} onClick={() => initializeTest(duration, m)}
+                className={`px-3 py-1 text-sm font-medium rounded-md capitalize transition-all ${mode === m ? `${theme.accentBg} text-white` : `hover:${theme.panelBg} opacity-70 hover:opacity-100`}`}>
+                {m}
+              </button>
+            ))}
+          </div>
+
+          {/* Time */}
+          <div className={`flex ${theme.panelBg} rounded-lg p-1.5 shadow-sm`}>
+            {[15, 30, 60, 120].map((t) => (
+              <button key={t} onClick={() => initializeTest(t)}
+                className={`px-3 py-1 text-sm font-medium rounded-md transition-all ${duration === t ? `${theme.accentBg} text-white` : `hover:${theme.panelBg} opacity-70 hover:opacity-100`}`}>
+                {t}s
+              </button>
+            ))}
+          </div>
+
+          {/* Tools */}
+          <div className={`flex gap-2 ${theme.panelBg} rounded-lg p-1.5 shadow-sm`}>
+            <button onClick={() => setSoundEnabled(!soundEnabled)} className={`p-1.5 rounded-md hover:bg-black/10 transition-colors opacity-70 hover:opacity-100 ${soundEnabled ? theme.accent : ''}`} title="Toggle Sound">
+              {soundEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
+            </button>
+            <button onClick={() => setThemeName(t => t === 'dark' ? 'light' : t === 'light' ? 'matrix' : t === 'matrix' ? 'arcade' : 'dark')} className="p-1.5 rounded-md hover:bg-black/10 transition-colors opacity-70 hover:opacity-100" title="Toggle Theme" disabled={isRetro}>
+              <Settings size={18} className={isRetro ? 'opacity-30' : ''} />
+            </button>
+            <button onClick={() => setCurrentView(v => v === 'test' ? 'achievements' : 'test')} className={`p-1.5 rounded-md hover:bg-black/10 transition-colors opacity-70 hover:opacity-100 ${currentView === 'achievements' ? theme.accent : ''}`} title="Achievements">
+              <Award size={18} />
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <main className={`w-full flex-1 flex flex-col relative justify-center transition-transform duration-700 ${barrelRoll ? 'rotate-[360deg] scale-50' : ''} ${jitter ? 'animate-shake text-yellow-100' : ''}`}>
+        {currentView === 'achievements' ? (
+          <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 w-full mb-auto mt-4">
+            <div className="flex items-center justify-between mb-8">
+              <div className="flex items-center gap-3">
+                <Award size={32} className={theme.accent} />
+                <h2 className={`text-3xl font-bold ${theme.textBright}`}>Achievements</h2>
+              </div>
+              <div className={`font-mono font-bold ${theme.textMuted}`}>
+                {unlockedAchievements.length} / {ALL_ACHIEVEMENTS.length}
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4 pb-20">
+              {ALL_ACHIEVEMENTS.map(achievement => {
+                const isUnlocked = unlockedAchievements.includes(achievement.id);
+                return (
+                  <div key={achievement.id} className={`p-4 rounded-xl border ${theme.panelBg} ${isUnlocked ? theme.border : 'border-dashed opacity-50 border-gray-600'} transition-all`}>
+                    <div className="flex items-start gap-3">
+                      <div className={`text-2xl ${isUnlocked ? '' : 'grayscale opacity-30'}`}>
+                        {isUnlocked ? achievement.icon : '🔒'}
+                      </div>
+                      <div>
+                        <h3 className={`font-bold ${isUnlocked ? theme.textBright : theme.textMuted}`}>
+                          {isUnlocked || !achievement.hidden ? achievement.title : 'Secret Achievement'}
+                        </h3>
+                        <p className={`text-sm mt-1 ${theme.textMuted}`}>
+                          {isUnlocked || !achievement.hidden ? achievement.desc : 'Keep playing to discover this!'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : status !== 'finished' ? (
+          <div className="w-full mx-auto">
+            {/* Live Stats Header */}
+            <div className={`flex justify-between items-center mb-6 transition-opacity duration-300 ${status === 'idle' ? 'opacity-0' : 'opacity-100'}`}>
+              <div className={`flex items-center gap-6 ${theme.accent}`}>
+                <div className="text-3xl font-mono font-medium w-16">{timeLeft}s</div>
+                
+                {/* Speedometer Gauge replacing static WPM */}
+                <Speedometer wpm={liveWpm} themeColors={theme} />
+              </div>
+
+              <div className={`flex items-center gap-2 text-2xl font-bold font-mono transition-all duration-300 ${combo > 0 ? 'text-orange-400 drop-shadow-[0_0_8px_rgba(251,146,60,0.8)]' : theme.textMuted} ${combo > 15 ? 'scale-110' : ''}`}>
+                <Flame size={combo > 15 ? 32 : 24} className={`transition-all duration-300 ${combo > 10 ? 'animate-pulse text-orange-500 drop-shadow-[0_0_10px_rgba(249,115,22,0.8)]' : ''} ${combo > 25 ? 'text-red-500 drop-shadow-[0_0_12px_rgba(239,68,68,0.8)]' : ''}`} /> 
+                {combo}
+              </div>
+            </div>
+
+            {/* Typing Container */}
+            <div className="relative group cursor-text" onClick={() => inputRef.current?.focus()}>
+              {!isFocused && (
+                <div className="absolute inset-0 z-20 backdrop-blur-[4px] bg-black/10 flex flex-col items-center justify-center rounded-xl transition-all duration-300">
+                  <span className={`text-lg font-medium flex items-center gap-3 px-6 py-3 rounded-full shadow-lg ${theme.bg} ${theme.textBright}`}>
+                    <AlertCircle size={20} className={theme.accent} /> Click to focus
+                  </span>
+                </div>
+              )}
+
+              <input
+                ref={inputRef} type="text" className="absolute opacity-0 -left-[9999px]"
+                autoComplete="off" autoCapitalize="off" autoCorrect="off" spellCheck="false"
+                value={currentWord.includes(' ') ? '' : currentWord}
+                onChange={handleChange} onKeyDown={handleKeyDown}
+                onFocus={() => setIsFocused(true)} onBlur={() => setIsFocused(false)}
+              />
+
+              <div ref={containerRef} className="h-[144px] overflow-hidden relative w-full">
+                <div className="flex flex-wrap gap-x-4 gap-y-2 leading-[48px] text-[32px] font-mono select-none transition-transform duration-200 ease-out absolute w-full"
+                  style={{ transform: `translateY(-${lineOffset}px)` }}>
+                  {words.map((word, wIdx) => renderWord(word, wIdx))}
+                </div>
+              </div>
+            </div>
+
+            {capsLock && isFocused && (
+              <div className={`mt-8 flex justify-center animate-in slide-in-from-top-2`}>
+                <div className={`px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-medium border ${theme.error} ${theme.errorBg} ${theme.errorBorder}`}>
+                  <AlertTriangle size={16} /> Caps Lock is on!
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          /* Results Screen */
+          <div className="animate-in fade-in slide-in-from-bottom-4 duration-700 flex flex-col items-center justify-center w-full">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 md:gap-12 mb-12 w-full max-w-5xl">
+              <div className="flex flex-col items-center">
+                <span className={`text-lg font-medium mb-1 flex items-center gap-2 ${theme.textMuted}`}><Activity size={18} /> WPM</span>
+                <span className={`text-6xl md:text-8xl font-bold tracking-tighter drop-shadow-xl ${theme.accent}`}>{finalStats?.wpm}</span>
+              </div>
+              <div className="flex flex-col items-center">
+                <span className={`text-lg font-medium mb-1 flex items-center gap-2 ${theme.textMuted}`}><Target size={18} /> Acc</span>
+                <span className={`text-6xl md:text-8xl font-bold tracking-tighter ${theme.textBright}`}>{finalStats?.accuracy}%</span>
+              </div>
+              <div className="flex flex-col items-center justify-center hidden lg:flex">
+                <span className={`text-sm uppercase tracking-wider font-bold mb-2 ${theme.textMuted}`}>Raw Keys</span>
+                <span className={`text-3xl font-bold ${theme.textBright}`}>{finalStats?.totalChars}</span>
+              </div>
+              <div className="flex flex-col items-center justify-center hidden lg:flex">
+                <span className={`text-sm uppercase tracking-wider font-bold mb-2 ${theme.textMuted}`}><Flame size={16} className="inline mr-1"/>Max Combo</span>
+                <span className={`text-3xl font-bold ${theme.accent}`}>{maxCombo}</span>
+              </div>
+            </div>
+            
+            <TimelineChart data={timeline} themeColors={theme} />
+
+            <div className={`grid grid-cols-2 md:grid-cols-4 gap-8 text-sm mt-8 py-4 px-8 rounded-2xl border ${theme.panelBg} ${theme.border} w-full max-w-4xl`}>
+              <div className="flex flex-col">
+                <span className={`uppercase tracking-wider text-xs font-bold mb-1 ${theme.textMuted}`}>Keystrokes</span>
+                <span className={`text-base font-medium ${theme.textBright}`}>
+                  {finalStats?.correctChars} <span className="opacity-50">/</span> <span className={theme.error}>{finalStats?.incorrectChars}</span>
+                </span>
+              </div>
+              <div className="flex flex-col">
+                <span className={`uppercase tracking-wider text-xs font-bold mb-1 ${theme.textMuted}`}>Backspaces</span>
+                <span className={`text-base font-medium ${theme.textBright}`}>{backspaceCount}</span>
+              </div>
+              <div className="flex flex-col">
+                <span className={`uppercase tracking-wider text-xs font-bold mb-1 ${theme.textMuted}`}>Test Type</span>
+                <span className={`text-base font-medium capitalize ${theme.textBright}`}>{duration}s {mode}</span>
+              </div>
+              <div className="flex flex-col">
+                <span className={`uppercase tracking-wider text-xs font-bold mb-1 ${theme.textMuted} flex items-center gap-1`}><Trophy size={12}/> PB</span>
+                <span className={`text-base font-medium ${theme.accent}`}>{personalBest} wpm</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {currentView !== 'achievements' && (
+          <>
+            <div className={`mt-auto pt-12 flex flex-col items-center justify-center gap-3 ${theme.textMuted}`}>
+              <button onClick={() => initializeTest()} className={`p-4 rounded-full transition-all duration-200 group hover:${theme.textBright} hover:bg-black/10`} title="Restart Test">
+                <RotateCcw size={28} className="group-hover:-rotate-90 transition-transform duration-300" />
+              </button>
+              <span className={`text-xs font-medium uppercase tracking-widest opacity-50 px-3 py-1 rounded-md ${theme.panelBg}`}>tab / esc to restart</span>
+            </div>
+
+            {/* Fun Extras Rendering */}
+            <Mascot combo={combo} wpm={liveWpm} status={status} themeColors={theme} onClick={handleMascotClick} clickCount={mascotClicks} />
+          </>
+        )}
+        
+        {/* Achievements Toasts */}
+        <div className="fixed top-8 right-8 flex flex-col gap-3 z-50 pointer-events-none">
+          {toasts.map((toast) => (
+            <div key={toast.id} className={`animate-in slide-in-from-right-8 fade-in duration-300 flex items-center gap-3 px-5 py-3 rounded-xl shadow-2xl font-bold border ${theme.panelBg} ${theme.border} ${theme.textBright}`}>
+              <Award size={24} className={theme.accent} />
+              <div>
+                <div className="text-[10px] uppercase tracking-wider opacity-70">Achievement Unlocked</div>
+                <div className="text-sm">{toast.title}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+      </main>
+    </div>
+  );
+}
